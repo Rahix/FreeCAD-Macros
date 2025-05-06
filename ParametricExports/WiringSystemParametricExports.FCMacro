@@ -1,0 +1,109 @@
+import time
+import pathlib
+
+# Which components to export
+components = {
+    "COMB": True,
+    "MOUNT": False,
+    "HOOK": False,
+}
+
+# Variants of the "Comb"
+comb_widths = [50, 75, 100, 150, 200]
+comb_heights = [100, 150]
+comb_variant_key = "H"
+
+mount_variant = "-U-M8"
+
+# Variants of the "Hook"
+hook_lengths = {
+    100: 90,
+    150: 120,
+}
+hook_variant = "-"
+
+# Find the path where objects shall be exported to
+base_path = pathlib.Path(FreeCAD.ActiveDocument.FileName).parent / "Parts"
+
+
+def export_objects(objs, component, name):
+    """Export `objs` as both STEP and STL into the respective subdirectories."""
+    step_path = base_path / f"STEP-{component}" / f"{name}.step"
+    print(f"Exporting {step_path} ...")
+    Gui.updateGui()
+    path = step_path.__fspath__()
+    import ImportGui
+
+    ImportGui.export(objs, path)
+
+    stl_path = base_path / f"STL-{component}" / f"{name}.stl"
+    print(f"Exporting {stl_path} ...")
+    Gui.updateGui()
+    path = stl_path.__fspath__()
+    import Mesh
+
+    Mesh.export(objs, path)
+
+
+start_overall = time.monotonic()
+
+if components["COMB"]:
+    for height in comb_heights:
+        for width in comb_widths:
+            name = f"COMB-{comb_variant_key}-{height}-{width}"
+            start = time.monotonic()
+            print(f"Generating {name} ...")
+            Gui.updateGui()
+
+            # Setup parametrics
+            comb_sketch = FreeCAD.ActiveDocument.getObjectsByLabel("SketchCombBase")[0]
+            comb_sketch.setDatum("width", FreeCAD.Units.Quantity(f"{width:.2f}mm"))
+            comb_sketch.setDatum("height", FreeCAD.Units.Quantity(f"{height:.2f}mm"))
+
+            # Recompute the model.  Takes a long time....
+            FreeCAD.ActiveDocument.recompute()
+            Gui.updateGui()
+
+            # Export models
+            objs = [FreeCAD.ActiveDocument.getObjectsByLabel("Comb")[0]]
+            export_objects(objs, "COMB", name)
+
+            end = time.monotonic()
+            duration = end - start
+            print(f"Done.  Took {duration:.3f}s.")
+
+if components["MOUNT"]:
+    if "-U-" in mount_variant:
+        name = f"MOUNT{mount_variant}"
+        objs = [FreeCAD.ActiveDocument.getObjectsByLabel("Mounting Hook Export")[0]]
+        export_objects(objs, "MOUNT", name)
+
+if components["HOOK"]:
+    for nominal_height, actual_height in hook_lengths.items():
+        name = f"HOOK{hook_variant}{nominal_height}"
+        start = time.monotonic()
+        print(f"Generating {name} ...")
+        Gui.updateGui()
+
+        # Setup parametrics
+        hook_sketch = FreeCAD.ActiveDocument.getObjectsByLabel("Sketch032")[0]
+        hook_sketch.setDatum(
+            "hook_size", FreeCAD.Units.Quantity(f"{actual_height:.2f}mm")
+        )
+
+        FreeCAD.ActiveDocument.recompute()
+        Gui.updateGui()
+
+        # Export models
+        objs = [FreeCAD.ActiveDocument.getObjectsByLabel("Cable Hook Export")[0]]
+        export_objects(objs, "HOOK", name)
+
+        end = time.monotonic()
+        duration = end - start
+        print(f"Done.  Took {duration:.3f}s.")
+
+end_overall = time.monotonic()
+duration_overall = end_overall - start_overall
+print(
+    f"Competed.  Total duration was {duration_overall:.3f}s (= {duration_overall / 60:.0f}min)."
+)
