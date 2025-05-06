@@ -1,0 +1,164 @@
+import math
+
+LAYER_HEIGHT = "0.2 mm"
+
+
+def make_derived_sketch(body, original, suffix):
+    sketch = body.newObject("Sketcher::SketchObject", original.Name + suffix)
+    sketch.AttachmentSupport = [(original, "")]
+    sketch.MapMode = "ObjectXY"
+    sketch.Label = original.Label + suffix
+    sketch.recompute()
+    return sketch
+
+
+def make_parametric_square(sketch, center_expr, size_expr):
+    last_geo_id = len(sketch.Geometry)
+    new_geo = [
+        Part.LineSegment(App.Vector(-1, 1, 0), App.Vector(1, 1, 0)),
+        Part.LineSegment(App.Vector(1, 1, 0), App.Vector(1, -1, 0)),
+        Part.LineSegment(App.Vector(1, -1, 0), App.Vector(-1, -1, 0)),
+        Part.LineSegment(App.Vector(-1, -1, 0), App.Vector(-1, 1, 0)),
+    ]
+    sketch.addGeometry(new_geo, False)
+    new_constraints = [
+        Sketcher.Constraint("Coincident", last_geo_id + 0, 2, last_geo_id + 1, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 1, 2, last_geo_id + 2, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 2, 2, last_geo_id + 3, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 3, 2, last_geo_id + 0, 1),
+        Sketcher.Constraint("Horizontal", last_geo_id + 0),
+        Sketcher.Constraint("Horizontal", last_geo_id + 2),
+        Sketcher.Constraint("Vertical", last_geo_id + 1),
+        Sketcher.Constraint("Vertical", last_geo_id + 3),
+    ]
+    sketch.addConstraint(new_constraints)
+    last_c = len(sketch.Constraints)
+    new_constraints = [
+        Sketcher.Constraint("DistanceX", last_geo_id + 0, 1, -1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 0, 1, 1),
+        Sketcher.Constraint("DistanceX", last_geo_id + 2, 1, 1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 2, 1, -1),
+    ]
+    sketch.addConstraint(new_constraints)
+    sketch.setExpression(f"Constraints[{last_c + 0}]", f"{center_expr}.x * 1mm - {size_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 1}]", f"{center_expr}.y * 1mm + {size_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 2}]", f"{center_expr}.x * 1mm + {size_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 3}]", f"{center_expr}.y * 1mm - {size_expr} / 2")
+    sketch.recompute()
+
+
+def make_parametric_y_cutout(sketch, center_expr, size_inner_expr, size_outer_expr):
+    last_geo_id = len(sketch.Geometry)
+    new_geo = [
+        Part.ArcOfCircle(
+            Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 1),
+            math.pi / 4 * 1,
+            math.pi / 4 * 3,
+        ),
+        Part.ArcOfCircle(
+            Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 1),
+            math.pi / 4 * 5,
+            math.pi / 4 * 7,
+        ),
+        Part.LineSegment(App.Vector(-1, 1, 0), App.Vector(-1, -1, 0)),
+        Part.LineSegment(App.Vector(1, 1, 0), App.Vector(1, -1, 0)),
+    ]
+    sketch.addGeometry(new_geo, False)
+    new_constraints = [
+        Sketcher.Constraint("Coincident", last_geo_id + 0, 1, last_geo_id + 3, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 0, 2, last_geo_id + 2, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 1, 1, last_geo_id + 2, 2),
+        Sketcher.Constraint("Coincident", last_geo_id + 1, 2, last_geo_id + 3, 2),
+    ]
+    sketch.addConstraint(new_constraints)
+    last_c = len(sketch.Constraints)
+    new_constraints = [
+        Sketcher.Constraint("DistanceX", last_geo_id + 0, 1, 1),
+        Sketcher.Constraint("DistanceX", last_geo_id + 1, 1, 1),
+        Sketcher.Constraint("DistanceX", last_geo_id + 0, 2, 1),
+        Sketcher.Constraint("DistanceX", last_geo_id + 1, 2, 1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 0, 1, 1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 0, 2, 1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 1, 1, -1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 1, 2, -1),
+        Sketcher.Constraint("DistanceY", last_geo_id + 0, 3, 0),
+        Sketcher.Constraint("DistanceY", last_geo_id + 1, 3, 0),
+    ]
+    sketch.addConstraint(new_constraints)
+    y_offset_expr = f"sqrt(({size_outer_expr} / 2)^2 - ({size_inner_expr} / 2)^2)"
+    sketch.setExpression(f"Constraints[{last_c + 0}]", f"{center_expr}.x * 1mm + {size_inner_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 1}]", f"{center_expr}.x * 1mm - {size_inner_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 2}]", f"{center_expr}.x * 1mm - {size_inner_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 3}]", f"{center_expr}.x * 1mm + {size_inner_expr} / 2")
+    sketch.setExpression(f"Constraints[{last_c + 4}]", f"{center_expr}.y * 1mm + {y_offset_expr}")
+    sketch.setExpression(f"Constraints[{last_c + 5}]", f"{center_expr}.y * 1mm + {y_offset_expr}")
+    sketch.setExpression(f"Constraints[{last_c + 6}]", f"{center_expr}.y * 1mm - {y_offset_expr}")
+    sketch.setExpression(f"Constraints[{last_c + 7}]", f"{center_expr}.y * 1mm - {y_offset_expr}")
+    sketch.setExpression(f"Constraints[{last_c + 8}]", f"{center_expr}.y")
+    sketch.setExpression(f"Constraints[{last_c + 9}]", f"{center_expr}.y")
+    sketch.recompute()
+
+
+def make_upside_down_counterbores(body, hole):
+    if len(hole.Profile) < 1:
+        raise Exception("missing hole profile")
+
+    profile_sketch = hole.Profile[0]
+    if profile_sketch.TypeId != "Sketcher::SketchObject":
+        raise Exception("hole profile is not a Sketch object")
+
+    sketch_bridges_y = make_derived_sketch(body, profile_sketch, "_BridgesY")
+    sketch_bridges_x = make_derived_sketch(body, profile_sketch, "_BridgesX")
+
+    for index, circle in enumerate(profile_sketch.Geometry):
+        if circle.TypeId != "Part::GeomCircle":
+            continue
+
+        # Create parametric y bridges cutout for this circle
+        make_parametric_y_cutout(
+            sketch_bridges_y,
+            f"{profile_sketch.Name}.Geometry[{index}].Center",
+            f"{hole.Name}.Diameter",
+            f"{hole.Name}.HoleCutDiameter",
+        )
+
+        # Create parametric x bridges cutout for this circle
+        make_parametric_square(
+            sketch_bridges_x,
+            f"{profile_sketch.Name}.Geometry[{index}].Center",
+            f"{hole.Name}.Diameter",
+        )
+
+    pocket_bridges_y = body.newObject("PartDesign::Pocket", f"{hole.Name}_BridgesY")
+    pocket_bridges_y.Profile = (sketch_bridges_y, "")
+    pocket_bridges_y.ReferenceAxis = (sketch_bridges_y, ["N_Axis"])
+    pocket_bridges_y.Reversed = hole.Reversed
+    sketch_bridges_y.Visibility = False
+    pocket_bridges_y.setExpression("Length", f"{hole.Name}.HoleCutDepth + {LAYER_HEIGHT}")
+    pocket_bridges_y.Label = f"{hole.Label}_BridgesY"
+    pocket_bridges_y.recompute()
+
+    pocket_bridges_x = body.newObject("PartDesign::Pocket", f"{hole.Name}_BridgesX")
+    pocket_bridges_x.Profile = (sketch_bridges_x, "")
+    pocket_bridges_x.ReferenceAxis = (sketch_bridges_x, ["N_Axis"])
+    pocket_bridges_x.Reversed = hole.Reversed
+    sketch_bridges_x.Visibility = False
+    pocket_bridges_x.setExpression("Length", f"{hole.Name}.HoleCutDepth + {LAYER_HEIGHT} * 2")
+    pocket_bridges_x.Label = f"{hole.Label}_BridgesX"
+    pocket_bridges_x.recompute()
+
+
+active_body = Gui.ActiveDocument.ActiveView.getActiveObject("pdbody")
+
+sel = Gui.Selection.getSelection()
+if len(sel) != 1:
+    raise Exception("more than one or no objects selected")
+
+hole_obj = Gui.Selection.getSelection()[0]
+if hole_obj.TypeId != "PartDesign::Hole":
+    raise Exception("selected object is not a PartDesign Hole feature")
+
+
+# TODO: Check if hole_obj belongs to active_body
+
+make_upside_down_counterbores(active_body, hole_obj)
