@@ -13,5 +13,5 @@ as a reference for building similar macros for your own needs.
 [Df3DP-R3.5]: https://blog.rahix.de/design-for-3d-printing/#the-overhanging-counterbore-trick
 
 ## License
-This repository is licensed under the `LGPL v2` license.  See
+This repository is licensed under the `LGPL-2.1-or-later` license.  See
 [LICENSE](./LICENSE) for more info.
