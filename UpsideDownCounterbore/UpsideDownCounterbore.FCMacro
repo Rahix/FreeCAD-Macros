@@ -1,8 +1,18 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import math
+import os
+from PySide import QtCore, QtGui
 
 LAYER_HEIGHT = "0.2 mm"
+
+
+def abort_with_error(msg):
+    filename = os.path.basename(__file__)
+    diag = QtGui.QMessageBox(QtGui.QMessageBox.Warning, f"Error in {filename}", msg)
+    diag.setWindowModality(QtCore.Qt.ApplicationModal)
+    diag.exec_()
+    raise Exception(msg)
 
 
 def make_derived_sketch(body, original, suffix):
@@ -103,11 +113,11 @@ def make_parametric_y_cutout(sketch, center_expr, size_inner_expr, size_outer_ex
 
 def make_upside_down_counterbores(body, hole):
     if len(hole.Profile) < 1:
-        raise Exception("missing hole profile")
+        abort_with_error("missing hole profile")
 
     profile_sketch = hole.Profile[0]
     if profile_sketch.TypeId != "Sketcher::SketchObject":
-        raise Exception("hole profile is not a Sketch object")
+        abort_with_error("hole profile is not a Sketch object")
 
     sketch_bridges_y = make_derived_sketch(body, profile_sketch, "_BridgesY")
     sketch_bridges_x = make_derived_sketch(body, profile_sketch, "_BridgesX")
@@ -154,13 +164,20 @@ active_body = Gui.ActiveDocument.ActiveView.getActiveObject("pdbody")
 
 sel = Gui.Selection.getSelection()
 if len(sel) != 1:
-    raise Exception("more than one or no objects selected")
+    abort_with_error("more than one or no objects selected")
 
 hole_obj = Gui.Selection.getSelection()[0]
+if hole_obj.getParent() != active_body:
+    abort_with_error("selected object is not part of the active body")
 if hole_obj.TypeId != "PartDesign::Hole":
-    raise Exception("selected object is not a PartDesign Hole feature")
+    abort_with_error("selected object is not a PartDesign Hole feature")
 
-
-# TODO: Check if hole_obj belongs to active_body
-
-make_upside_down_counterbores(active_body, hole_obj)
+try:
+    # Open a transaction so the operation can be easily undone
+    App.ActiveDocument.openTransaction("Add upside down counterbores")
+    make_upside_down_counterbores(active_body, hole_obj)
+    App.ActiveDocument.commitTransaction()
+except Exception as e:
+    # When an error occurred, abort the entire transaction and rollback
+    App.ActiveDocument.abortTransaction()
+    raise e from None
