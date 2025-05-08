@@ -15,6 +15,15 @@ def abort_with_error(msg):
     raise Exception(msg)
 
 
+def confirm_proceed(msg):
+    filename = os.path.basename(__file__)
+    print(f"Warning: {msg}")
+    reply = QtGui.QMessageBox.question(None, f"Error in {filename}", f"{msg}\nProceed anyway?")
+    if reply != QtGui.QMessageBox.Yes:
+        raise Exception(msg)
+    print("Proceeding anyway...")
+
+
 def make_derived_sketch(body, original, suffix):
     sketch = body.newObject("Sketcher::SketchObject", original.Name + suffix)
     sketch.AttachmentSupport = [(original, "")]
@@ -112,6 +121,17 @@ def make_parametric_y_cutout(sketch, center_expr, size_inner_expr, size_outer_ex
 
 
 def make_upside_down_counterbores(body, hole):
+    if hole.HoleCutType not in [
+        "Counterbore",
+        "ISO 4762",
+        "ISO 14583 (partial)",
+        "DIN 7984",
+        "ISO 4762 + 7089",
+        "ISO 14583",
+        "ISO 12474",
+    ]:
+        confirm_proceed("selected hole does not seem to have a counterbore!")
+
     if len(hole.Profile) < 1:
         abort_with_error("missing hole profile")
 
@@ -163,8 +183,10 @@ def make_upside_down_counterbores(body, hole):
 active_body = Gui.ActiveDocument.ActiveView.getActiveObject("pdbody")
 
 sel = Gui.Selection.getSelection()
-if len(sel) != 1:
-    abort_with_error("more than one or no objects selected")
+if len(sel) == 0:
+    abort_with_error("no Hole object selected")
+if len(sel) > 1:
+    abort_with_error("more than one object selected")
 
 hole_obj = Gui.Selection.getSelection()[0]
 if hole_obj.getParent() != active_body:
