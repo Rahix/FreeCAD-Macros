@@ -3,24 +3,39 @@
 import math
 import os
 from PySide import QtCore, QtGui
+from dataclasses import dataclass
 
 import FreeCAD as App
 import FreeCADGui as Gui
 import Part
 import Sketcher
 
-ENTRANCE_DEPTH = 1
 
+@dataclass
+class RibParameters:
+    # Thread General
+    name: str
+    normative: float
+    core_diameter: float
+    core_bore: float
+
+    # Rib Specific
+    entrance_depth: float
+    outer_diameter: float
+    rib_engagement: float
+    rib_diameter: float
+    verified: bool
+
+
+# fmt: off
 RIB_PARAMETERS = {
-    "M5": {
-        "normative": 5,
-        "outer_diameter": 5.4,
-        "rib_engagement": 0.4,
-        "rib_diameter": 2.0,
-        "core_diameter": 4.02,
-        "core_bore": 4.2,
-    },
+    "M3": RibParameters(name="M3", normative=3, core_diameter=2.39, core_bore=2.5, entrance_depth=0.6, outer_diameter=3.4, rib_engagement=0.2, rib_diameter=1.4, verified=False),
+    "M4": RibParameters(name="M4", normative=4, core_diameter=3.14, core_bore=3.3, entrance_depth=0.8, outer_diameter=4.4, rib_engagement=0.3, rib_diameter=1.6, verified=False),
+    "M5": RibParameters(name="M5", normative=5, core_diameter=4.02, core_bore=4.2, entrance_depth=1.0, outer_diameter=5.4, rib_engagement=0.4, rib_diameter=2.0, verified=True),
+    "M6": RibParameters(name="M6", normative=6, core_diameter=4.77, core_bore=5.0, entrance_depth=1.2, outer_diameter=6.4, rib_engagement=0.5, rib_diameter=2.2, verified=False),
+    "M8": RibParameters(name="M8", normative=8, core_diameter=6.47, core_bore=6.8, entrance_depth=1.4, outer_diameter=8.5, rib_engagement=0.5, rib_diameter=2.6, verified=False),
 }
+# fmt: on
 
 
 def abort_with_error(msg):
@@ -68,17 +83,16 @@ def make_parametric_circle(sketch, center_expr, size_expr):
     sketch.recompute()
 
 
-def get_or_create_rib_template(doc, metric_size):
-    name = f"Sketch_{metric_size}_RibThreadTemplate"
+def get_or_create_rib_template(doc, rib_param: RibParameters):
+    name = f"Sketch_{rib_param.name}_RibThreadTemplate"
     sketch = doc.getObject(name)
     if sketch is not None:
         return sketch
 
-    rib_param = RIB_PARAMETERS[metric_size]
     sketch = doc.addObject("Sketcher::SketchObject", name)
 
-    center_circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["outer_diameter"] / 2)
-    rib_center_radius = (rib_param["normative"] - rib_param["rib_engagement"] * 2 + rib_param["rib_diameter"]) / 2
+    center_circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param.outer_diameter / 2)
+    rib_center_radius = (rib_param.normative - rib_param.rib_engagement * 2 + rib_param.rib_diameter) / 2
     rib_center_circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_center_radius)
 
     rib_center_circle_id = len(sketch.Geometry)
@@ -86,11 +100,11 @@ def get_or_create_rib_template(doc, metric_size):
     sketch.toggleConstruction(rib_center_circle_id)
 
     normative_circle_id = len(sketch.Geometry)
-    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["normative"] / 2))
+    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param.normative / 2))
     sketch.toggleConstruction(normative_circle_id)
 
     core_circle_id = len(sketch.Geometry)
-    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["core_diameter"] / 2))
+    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param.core_diameter / 2))
     sketch.toggleConstruction(core_circle_id)
 
     rib_arc_ids = len(sketch.Geometry)
@@ -101,7 +115,7 @@ def get_or_create_rib_template(doc, metric_size):
         rib_circle = Part.Circle(
             rib_center,
             App.Vector(0, 0, 1),
-            rib_param["rib_diameter"] / 2,
+            rib_param.rib_diameter / 2,
         )
         intersections = center_circle.intersect(rib_circle)
         if len(intersections) != 2:
@@ -155,10 +169,10 @@ def get_or_create_rib_template(doc, metric_size):
     new_constraints = [
         # Diameters
         Sketcher.Constraint("Diameter", rib_center_circle_id, rib_center_radius * 2),
-        Sketcher.Constraint("Diameter", center_arc_ids + 0, rib_param["outer_diameter"]),
-        Sketcher.Constraint("Diameter", rib_arc_ids + 0, rib_param["rib_diameter"]),
-        Sketcher.Constraint("Diameter", normative_circle_id, rib_param["normative"]),
-        Sketcher.Constraint("Diameter", core_circle_id, rib_param["core_diameter"]),
+        Sketcher.Constraint("Diameter", center_arc_ids + 0, rib_param.outer_diameter),
+        Sketcher.Constraint("Diameter", rib_arc_ids + 0, rib_param.rib_diameter),
+        Sketcher.Constraint("Diameter", normative_circle_id, rib_param.normative),
+        Sketcher.Constraint("Diameter", core_circle_id, rib_param.core_diameter),
     ]
     sketch.addConstraint(new_constraints)
     sketch.renameConstraint(dia_constraint_ids + 1, "outer_diameter")
@@ -222,8 +236,19 @@ def make_rib_thread(body, hole):
     if hole.Tapered:
         abort_with_error("cannot generated rib-threads on a tapered Hole!")
 
+    if hole.ThreadSize not in RIB_PARAMETERS:
+        abort_with_error(f'thread size "{hole.ThreadSize}" is not yet known, please add parameters!')
+
     rib_param = RIB_PARAMETERS[hole.ThreadSize]
-    if hole.Diameter > (rib_param["normative"] - rib_param["rib_engagement"] * 2):
+
+    if not rib_param.verified:
+        confirm_proceed(
+            "the rib-thread parameters for this thread size have not yet been verified.\n"
+            + "they will probably work, but please test this before relying on them...\n"
+            + "if you are really nice, after testing, let me know about your results!"
+        )
+
+    if hole.Diameter > (rib_param.normative - rib_param.rib_engagement * 2):
         confirm_proceed("drill diameter of Hole is too big for ribs - they will get cut off!")
 
     if len(hole.Profile) < 1:
@@ -241,12 +266,12 @@ def make_rib_thread(body, hole):
         varset.addProperty("App::PropertyLength", "EntranceDepth", "Base")
         varset.addProperty("App::PropertyLength", "EntranceDiameter", "Base")
         varset.addProperty("App::PropertyAngle", "Rotation", "Base")
-        varset.EntranceDepth = "2 mm"
-        varset.OuterDiameter = "5 mm"
+        varset.EntranceDepth = f"{rib_param.entrance_depth} mm"
+        varset.EntranceDiameter = f"{rib_param.outer_diameter} mm"
         varset.Rotation = "0 deg"
         varset.recompute()
 
-    rib_template = get_or_create_rib_template(App.ActiveDocument, hole.ThreadSize)
+    rib_template = get_or_create_rib_template(App.ActiveDocument, rib_param)
     sketch_entrance = make_derived_sketch(body, profile_sketch, "_ThreadEntrance")
 
     shape_binders = []
