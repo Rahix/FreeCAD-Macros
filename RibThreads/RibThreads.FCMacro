@@ -200,74 +200,31 @@ def get_or_create_rib_template(doc, metric_size):
     return sketch
 
 
-def make_parametric_ribs(sketch, center_expr, rotation_expr):
-    last_geo_id = len(sketch.Geometry)
-    circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 1)
-    new_geo = [
-        Part.ArcOfCircle(circle, math.pi / 3 * 0, math.pi / 3 * 1),
-        Part.ArcOfCircle(circle, math.pi / 3 * 1, math.pi / 3 * 2),
-        Part.ArcOfCircle(circle, math.pi / 3 * 2, math.pi / 3 * 3),
-        Part.ArcOfCircle(circle, math.pi / 3 * 3, math.pi / 3 * 4),
-        Part.ArcOfCircle(circle, math.pi / 3 * 4, math.pi / 3 * 5),
-        Part.ArcOfCircle(circle, math.pi / 3 * 5, math.pi / 3 * 0),
-    ]
-    sketch.addGeometry(new_geo, False)
-    new_constraints = [
-        # Arc End Coincidences
-        Sketcher.Constraint("Coincident", last_geo_id + 0, 2, last_geo_id + 1, 1),
-        Sketcher.Constraint("Coincident", last_geo_id + 1, 2, last_geo_id + 2, 1),
-        Sketcher.Constraint("Coincident", last_geo_id + 2, 2, last_geo_id + 3, 1),
-        Sketcher.Constraint("Coincident", last_geo_id + 3, 2, last_geo_id + 4, 1),
-        Sketcher.Constraint("Coincident", last_geo_id + 4, 2, last_geo_id + 5, 1),
-        Sketcher.Constraint("Coincident", last_geo_id + 5, 2, last_geo_id + 0, 1),
-        # Arc Center Coincidences
-        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 0, 3),
-        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 2, 3),
-        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 4, 3),
-    ]
-    sketch.addConstraint(new_constraints)
-    # last_c = len(sketch.Constraints)
-    # new_constraints = [
-    #     Sketcher.Constraint("DistanceX", last_geo_id + 0, 3, 0),
-    #     Sketcher.Constraint("DistanceY", last_geo_id + 0, 3, 0),
-    #     Sketcher.Constraint("DistanceX", last_geo_id + 2, 3, 0),
-    #     Sketcher.Constraint("DistanceY", last_geo_id + 2, 3, 0),
-    #     Sketcher.Constraint("DistanceX", last_geo_id + 4, 3, 0),
-    #     Sketcher.Constraint("DistanceY", last_geo_id + 4, 3, 0),
-    #     # Sketcher.Constraint("Diameter", last_geo_id + 0, 2),
-    # ]
-    # sketch.addConstraint(new_constraints)
-    # sketch.setExpression(f"Constraints[{last_c + 0}]", f"{center_expr}.x * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 1}]", f"{center_expr}.y * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 2}]", f"{center_expr}.x * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 3}]", f"{center_expr}.y * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 4}]", f"{center_expr}.x * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 5}]", f"{center_expr}.y * 1mm")
-    # sketch.setExpression(f"Constraints[{last_c + 2}]", f"{size_expr}")
-    sketch.recompute()
-
-
-def make_sketch_offset_shape_binder(*, body, template, sketch, index, center_expr):
+def make_sketch_offset_shape_binder(*, body, template, sketch, index, center_expr, rotation_expr):
     shape_binder = body.newObject("PartDesign::SubShapeBinder", f"{sketch.Name}_RibThread{index + 1:03}")
     shape_binder.Support = (template, "")
     shape_binder.Relative = False
     shape_binder.Visibility = False
     shape_binder.setExpression(
         "Placement",
-        f"{sketch.Name}.Placement * placement({center_expr}; rotation(0; 0; 0))",
+        f"{sketch.Name}.Placement * placement({center_expr}; rotation({rotation_expr}; 0; 0))",
     )
     return shape_binder
 
 
 def make_rib_thread(body, hole):
     if not hole.Threaded:
-        confirm_proceed("selected Hole is not threaded. will most likely generate oversized rib-threads!")
+        confirm_proceed("selected Hole is not threaded. will most likely generate broken rib-threads!")
 
     if hole.ModelThread:
         abort_with_error("cannot generated rib-threads on a Hole with modelled threads!")
 
     if hole.Tapered:
         abort_with_error("cannot generated rib-threads on a tapered Hole!")
+
+    rib_param = RIB_PARAMETERS[hole.ThreadSize]
+    if hole.Diameter > (rib_param["normative"] - rib_param["rib_engagement"] * 2):
+        confirm_proceed("drill diameter of Hole is too big for ribs - they will get cut off!")
 
     if len(hole.Profile) < 1:
         abort_with_error("missing hole profile")
@@ -277,12 +234,12 @@ def make_rib_thread(body, hole):
         abort_with_error("hole profile is not a Sketch object")
 
     # Only generate the varset if it does not exist yet
-    varset = App.ActiveDocument.getObject(f"{hole.Name}_RibThread")
+    varset = body.getObject(f"{hole.Name}_RibThread_Settings")
     if varset is None:
         varset = body.newObject("App::VarSet", f"{hole.Name}_RibThread_Settings")
         varset.Label = f"{hole.Label}_RibThread"
         varset.addProperty("App::PropertyLength", "EntranceDepth", "Base")
-        varset.addProperty("App::PropertyLength", "OuterDiameter", "Base")
+        varset.addProperty("App::PropertyLength", "EntranceDiameter", "Base")
         varset.addProperty("App::PropertyAngle", "Rotation", "Base")
         varset.EntranceDepth = "2 mm"
         varset.OuterDiameter = "5 mm"
@@ -300,7 +257,7 @@ def make_rib_thread(body, hole):
         make_parametric_circle(
             sketch_entrance,
             f"{profile_sketch.Name}.Geometry[{index}].Center",
-            f"{varset.Name}.OuterDiameter",
+            f"{varset.Name}.EntranceDiameter",
         )
 
         binder = make_sketch_offset_shape_binder(
@@ -309,6 +266,7 @@ def make_rib_thread(body, hole):
             sketch=profile_sketch,
             index=index,
             center_expr=f"{profile_sketch.Name}.Geometry[{index}].Center",
+            rotation_expr=f"{varset.Name}.Rotation",
         )
         shape_binders.append(binder)
 
@@ -347,7 +305,7 @@ def make_rib_thread(body, hole):
     pocket_entrance.TaperAngle = "-20 deg"
     sketch_entrance.Visibility = False
     # 2.8 is roughly the tan(90 - 20 deg), so the taper will be complete
-    pocket_entrance.setExpression("Length", f"({varset.Name}.OuterDiameter - {hole.Name}.Diameter) * 2.8")
+    pocket_entrance.setExpression("Length", f"({varset.Name}.EntranceDiameter - {hole.Name}.Diameter) * 2.8")
     pocket_entrance.setExpression("Length2", f"{varset.Name}.EntranceDepth")
     pocket_entrance.Label = f"{hole.Label}_ThreadEntrance"
     pocket_entrance.recompute()
