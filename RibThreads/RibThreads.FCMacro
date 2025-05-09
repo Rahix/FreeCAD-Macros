@@ -1,0 +1,378 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+import math
+import os
+from PySide import QtCore, QtGui
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Sketcher
+
+ENTRANCE_DEPTH = 1
+
+RIB_PARAMETERS = {
+    "M5": {
+        "normative": 5,
+        "outer_diameter": 5.4,
+        "rib_engagement": 0.4,
+        "rib_diameter": 2.0,
+        "core_diameter": 4.02,
+        "core_bore": 4.2,
+    },
+}
+
+
+def abort_with_error(msg):
+    filename = os.path.basename(__file__)
+    diag = QtGui.QMessageBox(QtGui.QMessageBox.Warning, f"Error in {filename}", msg)
+    diag.setWindowModality(QtCore.Qt.ApplicationModal)
+    diag.exec_()
+    raise Exception(msg)
+
+
+def confirm_proceed(msg):
+    filename = os.path.basename(__file__)
+    print(f"Warning: {msg}")
+    reply = QtGui.QMessageBox.question(None, f"Error in {filename}", f"{msg}\nProceed anyway?")
+    if reply != QtGui.QMessageBox.Yes:
+        raise Exception(msg)
+    print("Proceeding anyway...")
+
+
+def make_derived_sketch(body, original, suffix):
+    sketch = body.newObject("Sketcher::SketchObject", original.Name + suffix)
+    sketch.AttachmentSupport = [(original, "")]
+    sketch.MapMode = "ObjectXY"
+    sketch.Label = original.Label + suffix
+    sketch.recompute()
+    return sketch
+
+
+def make_parametric_circle(sketch, center_expr, size_expr):
+    last_geo_id = len(sketch.Geometry)
+    new_geo = [
+        Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 2),
+    ]
+    sketch.addGeometry(new_geo, False)
+    last_c = len(sketch.Constraints)
+    new_constraints = [
+        Sketcher.Constraint("DistanceX", last_geo_id + 0, 3, 0),
+        Sketcher.Constraint("DistanceY", last_geo_id + 0, 3, 0),
+        Sketcher.Constraint("Diameter", last_geo_id + 0, 2),
+    ]
+    sketch.addConstraint(new_constraints)
+    sketch.setExpression(f"Constraints[{last_c + 0}]", f"{center_expr}.x * 1mm")
+    sketch.setExpression(f"Constraints[{last_c + 1}]", f"{center_expr}.y * 1mm")
+    sketch.setExpression(f"Constraints[{last_c + 2}]", f"{size_expr}")
+    sketch.recompute()
+
+
+def get_or_create_rib_template(doc, metric_size):
+    name = f"Sketch_{metric_size}_RibThreadTemplate"
+    sketch = doc.getObject(name)
+    if sketch is not None:
+        return sketch
+
+    rib_param = RIB_PARAMETERS[metric_size]
+    sketch = doc.addObject("Sketcher::SketchObject", name)
+
+    center_circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["outer_diameter"] / 2)
+    rib_center_radius = (rib_param["normative"] - rib_param["rib_engagement"] * 2 + rib_param["rib_diameter"]) / 2
+    rib_center_circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_center_radius)
+
+    rib_center_circle_id = len(sketch.Geometry)
+    sketch.addGeometry(rib_center_circle)
+    sketch.toggleConstruction(rib_center_circle_id)
+
+    normative_circle_id = len(sketch.Geometry)
+    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["normative"] / 2))
+    sketch.toggleConstruction(normative_circle_id)
+
+    core_circle_id = len(sketch.Geometry)
+    sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), rib_param["core_diameter"] / 2))
+    sketch.toggleConstruction(core_circle_id)
+
+    rib_arc_ids = len(sketch.Geometry)
+    center_angles = []
+    for i in range(3):
+        a = i * math.pi * 2 / 3
+        rib_center = App.Vector(math.cos(a) * rib_center_radius, math.sin(a) * rib_center_radius, 0)
+        rib_circle = Part.Circle(
+            rib_center,
+            App.Vector(0, 0, 1),
+            rib_param["rib_diameter"] / 2,
+        )
+        intersections = center_circle.intersect(rib_circle)
+        if len(intersections) != 2:
+            abort_with_error("ribs do not intersect outer diameter, cannot proceed!")
+
+        center_angles += [math.atan2(p.Y, p.X) for p in intersections]
+
+        rib_intersections = [App.Vector(p.X, p.Y, 0) - rib_center for p in intersections]
+        rib_angles = [math.atan2(p.y, p.x) for p in rib_intersections]
+
+        sketch.addGeometry(Part.ArcOfCircle(rib_circle, rib_angles[0], rib_angles[1]))
+
+    assert len(center_angles) == 6
+    center_angles.sort()
+
+    center_arc_ids = len(sketch.Geometry)
+    new_geo = [
+        Part.ArcOfCircle(center_circle, center_angles[1], center_angles[2]),
+        Part.ArcOfCircle(center_circle, center_angles[3], center_angles[4]),
+        Part.ArcOfCircle(center_circle, center_angles[5], center_angles[0]),
+    ]
+    sketch.addGeometry(new_geo, False)
+
+    new_constraints = [
+        # Arc End Coincidences
+        Sketcher.Constraint("Coincident", center_arc_ids + 0, 2, rib_arc_ids + 0, 2),
+        Sketcher.Constraint("Coincident", center_arc_ids + 1, 1, rib_arc_ids + 0, 1),
+        Sketcher.Constraint("Coincident", center_arc_ids + 1, 2, rib_arc_ids + 1, 2),
+        Sketcher.Constraint("Coincident", center_arc_ids + 2, 1, rib_arc_ids + 1, 1),
+        Sketcher.Constraint("Coincident", center_arc_ids + 2, 2, rib_arc_ids + 2, 2),
+        Sketcher.Constraint("Coincident", center_arc_ids + 0, 1, rib_arc_ids + 2, 1),
+        # Arc Centers
+        Sketcher.Constraint("Coincident", rib_center_circle_id, 3, -1, 1),
+        Sketcher.Constraint("Coincident", normative_circle_id, 3, -1, 1),
+        Sketcher.Constraint("Coincident", core_circle_id, 3, -1, 1),
+        Sketcher.Constraint("Coincident", center_arc_ids + 0, 3, -1, 1),
+        Sketcher.Constraint("Coincident", center_arc_ids + 1, 3, -1, 1),
+        Sketcher.Constraint("Coincident", center_arc_ids + 2, 3, -1, 1),
+        Sketcher.Constraint("PointOnObject", rib_arc_ids + 0, 3, rib_center_circle_id),
+        Sketcher.Constraint("PointOnObject", rib_arc_ids + 1, 3, rib_center_circle_id),
+        Sketcher.Constraint("PointOnObject", rib_arc_ids + 2, 3, rib_center_circle_id),
+        # Arc Equalities
+        Sketcher.Constraint("Equal", center_arc_ids + 0, center_arc_ids + 1),
+        Sketcher.Constraint("Equal", center_arc_ids + 0, center_arc_ids + 2),
+        Sketcher.Constraint("Equal", rib_arc_ids + 0, rib_arc_ids + 1),
+        Sketcher.Constraint("Equal", rib_arc_ids + 0, rib_arc_ids + 2),
+    ]
+    sketch.addConstraint(new_constraints)
+
+    dia_constraint_ids = len(sketch.Constraints)
+    new_constraints = [
+        # Diameters
+        Sketcher.Constraint("Diameter", rib_center_circle_id, rib_center_radius * 2),
+        Sketcher.Constraint("Diameter", center_arc_ids + 0, rib_param["outer_diameter"]),
+        Sketcher.Constraint("Diameter", rib_arc_ids + 0, rib_param["rib_diameter"]),
+        Sketcher.Constraint("Diameter", normative_circle_id, rib_param["normative"]),
+        Sketcher.Constraint("Diameter", core_circle_id, rib_param["core_diameter"]),
+    ]
+    sketch.addConstraint(new_constraints)
+    sketch.renameConstraint(dia_constraint_ids + 1, "outer_diameter")
+    sketch.renameConstraint(dia_constraint_ids + 2, "rib_diameter")
+    sketch.renameConstraint(dia_constraint_ids + 3, "normative_diameter")
+    sketch.renameConstraint(dia_constraint_ids + 4, "core_diameter")
+
+    # Lines for distance between ribs
+    line_ids = len(sketch.Geometry)
+    for i in range(3):
+        center1 = sketch.Geometry[rib_arc_ids + i].Center
+        center2 = sketch.Geometry[rib_arc_ids + ((i + 1) % 3)].Center
+
+        line_id = len(sketch.Geometry)
+        sketch.addGeometry(Part.LineSegment(center1, center2))
+        sketch.toggleConstruction(line_id)
+        new_constraints = [
+            Sketcher.Constraint("Coincident", line_id, 1, rib_arc_ids + i, 3),
+            Sketcher.Constraint("Coincident", line_id, 2, rib_arc_ids + ((i + 1) % 3), 3),
+        ]
+        sketch.addConstraint(new_constraints)
+
+    # Constrain distance between ribs to be equal
+    new_constraints = [
+        Sketcher.Constraint("Equal", line_ids + 0, line_ids + 1),
+        Sketcher.Constraint("Equal", line_ids + 0, line_ids + 2),
+    ]
+    sketch.addConstraint(new_constraints)
+
+    # Finally, constrain rotation of the ribs around the center
+    new_constraints = [
+        Sketcher.Constraint("PointOnObject", rib_arc_ids + 0, 3, -1),
+    ]
+    sketch.addConstraint(new_constraints)
+
+    sketch.Visibility = False
+    sketch.recompute()
+
+    return sketch
+
+
+def make_parametric_ribs(sketch, center_expr, rotation_expr):
+    last_geo_id = len(sketch.Geometry)
+    circle = Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 1)
+    new_geo = [
+        Part.ArcOfCircle(circle, math.pi / 3 * 0, math.pi / 3 * 1),
+        Part.ArcOfCircle(circle, math.pi / 3 * 1, math.pi / 3 * 2),
+        Part.ArcOfCircle(circle, math.pi / 3 * 2, math.pi / 3 * 3),
+        Part.ArcOfCircle(circle, math.pi / 3 * 3, math.pi / 3 * 4),
+        Part.ArcOfCircle(circle, math.pi / 3 * 4, math.pi / 3 * 5),
+        Part.ArcOfCircle(circle, math.pi / 3 * 5, math.pi / 3 * 0),
+    ]
+    sketch.addGeometry(new_geo, False)
+    new_constraints = [
+        # Arc End Coincidences
+        Sketcher.Constraint("Coincident", last_geo_id + 0, 2, last_geo_id + 1, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 1, 2, last_geo_id + 2, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 2, 2, last_geo_id + 3, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 3, 2, last_geo_id + 4, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 4, 2, last_geo_id + 5, 1),
+        Sketcher.Constraint("Coincident", last_geo_id + 5, 2, last_geo_id + 0, 1),
+        # Arc Center Coincidences
+        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 0, 3),
+        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 2, 3),
+        Sketcher.Constraint("Coincident", -1, 1, last_geo_id + 4, 3),
+    ]
+    sketch.addConstraint(new_constraints)
+    # last_c = len(sketch.Constraints)
+    # new_constraints = [
+    #     Sketcher.Constraint("DistanceX", last_geo_id + 0, 3, 0),
+    #     Sketcher.Constraint("DistanceY", last_geo_id + 0, 3, 0),
+    #     Sketcher.Constraint("DistanceX", last_geo_id + 2, 3, 0),
+    #     Sketcher.Constraint("DistanceY", last_geo_id + 2, 3, 0),
+    #     Sketcher.Constraint("DistanceX", last_geo_id + 4, 3, 0),
+    #     Sketcher.Constraint("DistanceY", last_geo_id + 4, 3, 0),
+    #     # Sketcher.Constraint("Diameter", last_geo_id + 0, 2),
+    # ]
+    # sketch.addConstraint(new_constraints)
+    # sketch.setExpression(f"Constraints[{last_c + 0}]", f"{center_expr}.x * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 1}]", f"{center_expr}.y * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 2}]", f"{center_expr}.x * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 3}]", f"{center_expr}.y * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 4}]", f"{center_expr}.x * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 5}]", f"{center_expr}.y * 1mm")
+    # sketch.setExpression(f"Constraints[{last_c + 2}]", f"{size_expr}")
+    sketch.recompute()
+
+
+def make_sketch_offset_shape_binder(*, body, template, sketch, index, center_expr):
+    shape_binder = body.newObject("PartDesign::SubShapeBinder", f"{sketch.Name}_RibThread{index + 1:03}")
+    shape_binder.Support = (template, "")
+    shape_binder.Relative = False
+    shape_binder.Visibility = False
+    shape_binder.setExpression(
+        "Placement",
+        f"{sketch.Name}.Placement * placement({center_expr}; rotation(0; 0; 0))",
+    )
+    return shape_binder
+
+
+def make_rib_thread(body, hole):
+    if not hole.Threaded:
+        confirm_proceed("selected Hole is not threaded. will most likely generate oversized rib-threads!")
+
+    if hole.ModelThread:
+        abort_with_error("cannot generated rib-threads on a Hole with modelled threads!")
+
+    if hole.Tapered:
+        abort_with_error("cannot generated rib-threads on a tapered Hole!")
+
+    if len(hole.Profile) < 1:
+        abort_with_error("missing hole profile")
+
+    profile_sketch = hole.Profile[0]
+    if profile_sketch.TypeId != "Sketcher::SketchObject":
+        abort_with_error("hole profile is not a Sketch object")
+
+    # Only generate the varset if it does not exist yet
+    varset = App.ActiveDocument.getObject(f"{hole.Name}_RibThread")
+    if varset is None:
+        varset = body.newObject("App::VarSet", f"{hole.Name}_RibThread_Settings")
+        varset.Label = f"{hole.Label}_RibThread"
+        varset.addProperty("App::PropertyLength", "EntranceDepth", "Base")
+        varset.addProperty("App::PropertyLength", "OuterDiameter", "Base")
+        varset.addProperty("App::PropertyAngle", "Rotation", "Base")
+        varset.EntranceDepth = "2 mm"
+        varset.OuterDiameter = "5 mm"
+        varset.Rotation = "0 deg"
+        varset.recompute()
+
+    rib_template = get_or_create_rib_template(App.ActiveDocument, hole.ThreadSize)
+    sketch_entrance = make_derived_sketch(body, profile_sketch, "_ThreadEntrance")
+
+    shape_binders = []
+    for index, circle in enumerate(profile_sketch.Geometry):
+        if circle.TypeId != "Part::GeomCircle":
+            continue
+
+        make_parametric_circle(
+            sketch_entrance,
+            f"{profile_sketch.Name}.Geometry[{index}].Center",
+            f"{varset.Name}.OuterDiameter",
+        )
+
+        binder = make_sketch_offset_shape_binder(
+            body=body,
+            template=rib_template,
+            sketch=profile_sketch,
+            index=index,
+            center_expr=f"{profile_sketch.Name}.Geometry[{index}].Center",
+        )
+        shape_binders.append(binder)
+
+    # Create merged shape-binder
+    merged_binder = body.newObject("PartDesign::SubShapeBinder", f"{hole.Name}_RibThreads")
+    merged_binder.Support = [(b, "") for b in shape_binders]
+    merged_binder.Relative = True
+    merged_binder.ViewObject.LineColor = (1.0, 0.84, 0.0, 0.60)
+    merged_binder.ViewObject.PointColor = (1.0, 0.84, 0.0, 0.60)
+    m = merged_binder.ViewObject.ShapeAppearance[0]
+    m.DiffuseColor = (1.0, 0.84, 0.0, 0.60)
+    merged_binder.ViewObject.ShapeAppearance = (m,)
+    merged_binder.ViewObject.Transparency = 60
+    merged_binder.recompute()
+
+    pocket_ribs = body.newObject("PartDesign::Pocket", f"{hole.Name}_ThreadRibs")
+    pocket_ribs.Profile = (merged_binder, "")
+    pocket_ribs.Reversed = hole.Reversed
+    merged_binder.Visibility = False
+    pocket_ribs.setExpression("Type", f"{hole.Name}.DepthType")
+    pocket_ribs.setExpression("Length", f"{hole.Name}.Depth")
+    pocket_ribs.Label = f"{hole.Label}_ThreadRibs"
+    pocket_ribs.recompute()
+
+    if hole.Reversed:
+        sketch_entrance.setExpression(".AttachmentOffset.Base.z", f"{varset.Name}.EntranceDepth")
+    else:
+        sketch_entrance.setExpression(".AttachmentOffset.Base.z", f"-{varset.Name}.EntranceDepth")
+    sketch_entrance.recompute()
+
+    pocket_entrance = body.newObject("PartDesign::Pocket", f"{hole.Name}_ThreadEntrance")
+    pocket_entrance.Profile = (sketch_entrance, "")
+    pocket_entrance.ReferenceAxis = (sketch_entrance, ["N_Axis"])
+    pocket_entrance.Reversed = hole.Reversed
+    pocket_entrance.Type = "TwoLengths"
+    pocket_entrance.TaperAngle = "-20 deg"
+    sketch_entrance.Visibility = False
+    # 2.8 is roughly the tan(90 - 20 deg), so the taper will be complete
+    pocket_entrance.setExpression("Length", f"({varset.Name}.OuterDiameter - {hole.Name}.Diameter) * 2.8")
+    pocket_entrance.setExpression("Length2", f"{varset.Name}.EntranceDepth")
+    pocket_entrance.Label = f"{hole.Label}_ThreadEntrance"
+    pocket_entrance.recompute()
+
+
+active_body = Gui.ActiveDocument.ActiveView.getActiveObject("pdbody")
+
+sel = Gui.Selection.getSelection()
+if len(sel) == 0:
+    abort_with_error("no Hole object selected")
+if len(sel) > 1:
+    abort_with_error("more than one object selected")
+
+hole_obj = Gui.Selection.getSelection()[0]
+if hole_obj.getParent() != active_body:
+    abort_with_error("selected object is not part of the active body")
+if hole_obj.TypeId != "PartDesign::Hole":
+    abort_with_error("selected object is not a PartDesign Hole feature")
+
+try:
+    # Open a transaction so the operation can be easily undone
+    App.ActiveDocument.openTransaction("Add upside down counterbores")
+    make_rib_thread(active_body, hole_obj)
+    App.ActiveDocument.commitTransaction()
+except Exception as e:
+    # When an error occurred, abort the entire transaction and rollback
+    App.ActiveDocument.abortTransaction()
+    raise e from None
