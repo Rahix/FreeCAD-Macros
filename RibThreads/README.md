@@ -37,6 +37,7 @@ The following changes will lead to automatic adjustment of the rib threads:
 - Moving the Sketch of the original Hole
 - Moving the circles inside the Sketch of the original Hole
 - Changing the settings in the VarSet for the rib threads
+- Changing the depth of the original Hole
 
 The following changes will **not** be followed.  Instead you will need to
 delete the shape-binders and pocket features of the rib-thread and re-run the
