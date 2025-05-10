@@ -37,6 +37,14 @@ RIB_PARAMETERS = {
 }
 # fmt: on
 
+# Aliases for newer FreeCAD versions
+RIB_PARAMETERS["M3x0.5"] = RIB_PARAMETERS["M3"]
+RIB_PARAMETERS["M4x0.7"] = RIB_PARAMETERS["M4"]
+RIB_PARAMETERS["M5x0.8"] = RIB_PARAMETERS["M5"]
+RIB_PARAMETERS["M6x1.0"] = RIB_PARAMETERS["M6"]
+RIB_PARAMETERS["M6x1"] = RIB_PARAMETERS["M6"]
+RIB_PARAMETERS["M8x1.25"] = RIB_PARAMETERS["M8"]
+
 
 def abort_with_error(msg):
     filename = os.path.basename(__file__)
