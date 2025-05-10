@@ -29,11 +29,11 @@ class RibParameters:
 
 # fmt: off
 RIB_PARAMETERS = {
-    "M3": RibParameters(name="M3", normative=3, core_diameter=2.39, core_bore=2.5, entrance_depth=0.6, outer_diameter=3.4, rib_engagement=0.2, rib_diameter=1.4, verified=False),
-    "M4": RibParameters(name="M4", normative=4, core_diameter=3.14, core_bore=3.3, entrance_depth=0.8, outer_diameter=4.4, rib_engagement=0.3, rib_diameter=1.6, verified=False),
+    "M3": RibParameters(name="M3", normative=3, core_diameter=2.39, core_bore=2.5, entrance_depth=0.6, outer_diameter=3.4, rib_engagement=0.2, rib_diameter=1.4, verified=True),
+    "M4": RibParameters(name="M4", normative=4, core_diameter=3.14, core_bore=3.3, entrance_depth=0.8, outer_diameter=4.4, rib_engagement=0.3, rib_diameter=1.6, verified=True),
     "M5": RibParameters(name="M5", normative=5, core_diameter=4.02, core_bore=4.2, entrance_depth=1.0, outer_diameter=5.4, rib_engagement=0.4, rib_diameter=2.0, verified=True),
-    "M6": RibParameters(name="M6", normative=6, core_diameter=4.77, core_bore=5.0, entrance_depth=1.2, outer_diameter=6.4, rib_engagement=0.5, rib_diameter=2.2, verified=False),
-    "M8": RibParameters(name="M8", normative=8, core_diameter=6.47, core_bore=6.8, entrance_depth=1.4, outer_diameter=8.5, rib_engagement=0.5, rib_diameter=2.6, verified=False),
+    "M6": RibParameters(name="M6", normative=6, core_diameter=4.77, core_bore=5.0, entrance_depth=1.2, outer_diameter=6.4, rib_engagement=0.5, rib_diameter=2.2, verified=True),
+    "M8": RibParameters(name="M8", normative=8, core_diameter=6.47, core_bore=6.8, entrance_depth=1.4, outer_diameter=8.5, rib_engagement=0.5, rib_diameter=2.6, verified=True),
 }
 # fmt: on
 
