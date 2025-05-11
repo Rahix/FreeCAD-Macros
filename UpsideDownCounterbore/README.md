@@ -1,3 +1,5 @@
+**_Info:_** _I have incorporated this macro into my upcoming [FusedFilamentDesign](https://github.com/Rahix/FusedFilamentDesign) FreeCAD addon! :)_
+
 `UpsideDownCounterbore.FCMacro`
 ===============================
 A macro to automatically build the geometry for the [overhanging counterbore

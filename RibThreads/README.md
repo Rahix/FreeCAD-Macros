@@ -1,3 +1,5 @@
+**_Info:_** _I have incorporated this macro into my upcoming [FusedFilamentDesign](https://github.com/Rahix/FusedFilamentDesign) FreeCAD addon! :)_
+
 `RibThreads.FCMacro`
 ====================
 A macro to automatically generate the geometry for [rib thread forming][1]
